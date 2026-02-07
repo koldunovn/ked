@@ -5,6 +5,9 @@ set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 set(CMAKE_C_EXTENSIONS OFF)
 
+# POSIX/XSI features (realpath, etc.)
+add_compile_definitions(_POSIX_C_SOURCE=200809L _XOPEN_SOURCE=700)
+
 # Strict warnings
 add_compile_options(-Wall -Wextra -Wpedantic -Werror)
 
@@ -56,7 +59,7 @@ endif()
 add_executable(gen_testdata tools/gen_testdata.c)
 target_include_directories(gen_testdata PRIVATE ${NETCDF_INCLUDE_DIRS})
 target_link_directories(gen_testdata PRIVATE ${NETCDF_LIBRARY_DIRS})
-target_link_libraries(gen_testdata PRIVATE ${NETCDF_LIBRARIES})
+target_link_libraries(gen_testdata PRIVATE ${NETCDF_LIBRARIES} m)
 
 if(ECCODES_FOUND)
     target_compile_definitions(gen_testdata PRIVATE KED_HAS_ECCODES)

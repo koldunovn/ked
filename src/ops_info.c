@@ -105,7 +105,7 @@ int ked_op_sinfo(const char *path)
         /* Build shape string */
         char shape_str[256] = "";
         for (int d = 0; d < var->ndims; d++) {
-            char tmp[64];
+            char tmp[512];
             int did = var->dimids[d];
             snprintf(tmp, sizeof(tmp), "%s%s(%zu)",
                      d > 0 ? " x " : "",

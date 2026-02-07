@@ -37,6 +37,15 @@ sudo dnf install netcdf-devel cmake gcc pkg-config eccodes-devel
 
 ecCodes is optional — the build will succeed without it, but GRIB support will be disabled.
 
+**DKRZ Levante:**
+
+Load netCDF via the module system and point pkg-config at the spack-installed ecCodes:
+
+```bash
+module load netcdf-c
+export PKG_CONFIG_PATH="/sw/spack-levante/eccodes-2.44.0-hsksp4/lib64/pkgconfig:$PKG_CONFIG_PATH"
+```
+
 ## Building
 
 ```bash
