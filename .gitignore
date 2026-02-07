@@ -4,6 +4,8 @@ build/
 *.so
 *.dylib
 *.nc
+*.grib
+*.grib2
 .DS_Store
 CMakeCache.txt
 CMakeFiles/
