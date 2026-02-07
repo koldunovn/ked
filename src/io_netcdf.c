@@ -4,6 +4,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 
 /* Format an attribute value as a human-readable string */
 static char *format_attr_value(int ncid, int varid, const char *name,
@@ -97,17 +98,52 @@ static void free_attrs(ked_attr_t *atts, int natts)
     free(atts);
 }
 
+/* Check if path is a directory containing .zgroup or .zmetadata (Zarr store).
+ * If so, build an NCZarr URI: file://<abspath>#mode=nczarr,zarr
+ * Returns a malloc'd string the caller must free, or NULL if not Zarr. */
+static char *make_zarr_uri(const char *path)
+{
+    struct stat st;
+    if (stat(path, &st) != 0 || !S_ISDIR(st.st_mode))
+        return NULL;
+
+    /* Check for Zarr v2 markers */
+    char probe[KED_MAX_PATH];
+    snprintf(probe, sizeof(probe), "%s/.zgroup", path);
+    if (stat(probe, &st) != 0) {
+        snprintf(probe, sizeof(probe), "%s/.zmetadata", path);
+        if (stat(probe, &st) != 0)
+            return NULL;
+    }
+
+    /* Resolve to absolute path */
+    char *abs = realpath(path, NULL);
+    if (!abs) return NULL;
+
+    size_t len = strlen("file://") + strlen(abs) + strlen("#mode=nczarr,zarr") + 1;
+    char *uri = ked_malloc(len);
+    snprintf(uri, len, "file://%s#mode=nczarr,zarr", abs);
+    free(abs);
+    return uri;
+}
+
 ked_dataset_t *ked_nc_open(const char *path)
 {
+    /* Auto-detect Zarr directories and build NCZarr URI */
+    char *zarr_uri = make_zarr_uri(path);
+    const char *open_path = zarr_uri ? zarr_uri : path;
+
     int ncid;
-    int rc = nc_open(path, NC_NOWRITE, &ncid);
+    int rc = nc_open(open_path, NC_NOWRITE, &ncid);
     if (rc != NC_NOERR) {
         fprintf(stderr, "ked: cannot open '%s': %s\n", path, nc_strerror(rc));
+        free(zarr_uri);
         return NULL;
     }
 
     ked_dataset_t *ds = ked_calloc(1, sizeof(ked_dataset_t));
     snprintf(ds->path, sizeof(ds->path), "%s", path);
+    free(zarr_uri);
     ds->ncid = ncid;
 
     /* Query format */
