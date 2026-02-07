@@ -1,40 +1,37 @@
 #include "dataset.h"
-#include "util.h"
 
-#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
-const char *ked_format_name(int format)
+const char *ked_format_name(ked_format_t format)
 {
     switch (format) {
-    case NC_FORMAT_CLASSIC:        return "netCDF-3 classic";
-    case NC_FORMAT_64BIT_OFFSET:   return "netCDF-3 64-bit offset";
-    case NC_FORMAT_NETCDF4:        return "netCDF-4";
-    case NC_FORMAT_NETCDF4_CLASSIC:return "netCDF-4 classic model";
-#ifdef NC_FORMAT_64BIT_DATA
-    case NC_FORMAT_64BIT_DATA:     return "netCDF-3 64-bit data";
-#endif
-    default:                       return "unknown";
+    case KED_FMT_NC3:         return "netCDF-3 classic";
+    case KED_FMT_NC3_64:      return "netCDF-3 64-bit offset";
+    case KED_FMT_NC4:         return "netCDF-4";
+    case KED_FMT_NC4_CLASSIC: return "netCDF-4 classic model";
+    case KED_FMT_GRIB1:       return "GRIB edition 1";
+    case KED_FMT_GRIB2:       return "GRIB edition 2";
+    default:                  return "unknown";
     }
 }
 
-const char *ked_type_name(nc_type type)
+const char *ked_type_name(ked_type_t type)
 {
     switch (type) {
-    case NC_BYTE:   return "byte";
-    case NC_CHAR:   return "char";
-    case NC_SHORT:  return "short";
-    case NC_INT:    return "int";
-    case NC_FLOAT:  return "float";
-    case NC_DOUBLE: return "double";
-    case NC_UBYTE:  return "ubyte";
-    case NC_USHORT: return "ushort";
-    case NC_UINT:   return "uint";
-    case NC_INT64:  return "int64";
-    case NC_UINT64: return "uint64";
-    case NC_STRING: return "string";
-    default:        return "unknown";
+    case KED_TYPE_BYTE:   return "byte";
+    case KED_TYPE_CHAR:   return "char";
+    case KED_TYPE_SHORT:  return "short";
+    case KED_TYPE_INT:    return "int";
+    case KED_TYPE_FLOAT:  return "float";
+    case KED_TYPE_DOUBLE: return "double";
+    case KED_TYPE_UBYTE:  return "ubyte";
+    case KED_TYPE_USHORT: return "ushort";
+    case KED_TYPE_UINT:   return "uint";
+    case KED_TYPE_INT64:  return "int64";
+    case KED_TYPE_UINT64: return "uint64";
+    case KED_TYPE_STRING: return "string";
+    default:              return "unknown";
     }
 }
 
@@ -52,16 +49,39 @@ size_t ked_var_size(const ked_var_t *var)
 {
     size_t elem_size = 0;
     switch (var->type) {
-    case NC_BYTE: case NC_CHAR: case NC_UBYTE:
+    case KED_TYPE_BYTE: case KED_TYPE_CHAR: case KED_TYPE_UBYTE:
         elem_size = 1; break;
-    case NC_SHORT: case NC_USHORT:
+    case KED_TYPE_SHORT: case KED_TYPE_USHORT:
         elem_size = 2; break;
-    case NC_INT: case NC_UINT: case NC_FLOAT:
+    case KED_TYPE_INT: case KED_TYPE_UINT: case KED_TYPE_FLOAT:
         elem_size = 4; break;
-    case NC_DOUBLE: case NC_INT64: case NC_UINT64:
+    case KED_TYPE_DOUBLE: case KED_TYPE_INT64: case KED_TYPE_UINT64:
         elem_size = 8; break;
     default:
         elem_size = 0; break;
     }
     return ked_var_nelems(var) * elem_size;
+}
+
+void ked_dataset_close(ked_dataset_t *ds)
+{
+    if (!ds) return;
+    if (ds->backend_close) ds->backend_close(ds->backend);
+    for (int v = 0; v < ds->nvars; v++) {
+        if (ds->vars[v].atts) {
+            for (int a = 0; a < ds->vars[v].natts; a++) {
+                free(ds->vars[v].atts[a].value_str);
+            }
+            free(ds->vars[v].atts);
+        }
+    }
+    free(ds->vars);
+    free(ds->dims);
+    if (ds->gatts) {
+        for (int a = 0; a < ds->ngatts; a++) {
+            free(ds->gatts[a].value_str);
+        }
+        free(ds->gatts);
+    }
+    free(ds);
 }

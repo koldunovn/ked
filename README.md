@@ -101,8 +101,8 @@ ked sinfo output.nc
 # Plain output (no ANSI colors)
 ked --no-color info climate.nc
 
-# Works with NCZarr stores too
-ked info "file://data.zarr#mode=nczarr,zarr"
+# Works with Zarr stores (auto-detected)
+ked info data.zarr
 ```
 
 ## Project structure
@@ -125,9 +125,11 @@ ked/
 
 ## Roadmap
 
-- **Phase 2** — Data operations: `copy`, `merge`, `cat`, `select`
-- **Phase 3** — Statistical operators with OpenMP: `timmean`, `fldmean`, `yearmonmean`
-- **Phase 4** — GRIB support via ecCodes
+- **Phase 2** — GRIB support via ecCodes (auto-detection by magic bytes)
+- **Phase 3** — Data operations: `copy`, `merge`, `cat`, `select`
+- **Phase 4** — Statistical operators with OpenMP: `timmean`, `fldmean`, `yearmonmean`
+
+See [PLAN.md](PLAN.md) for detailed implementation notes.
 
 ## License
 

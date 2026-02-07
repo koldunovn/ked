@@ -1,6 +1,5 @@
 #include "ops_info.h"
 #include "dataset.h"
-#include "io_netcdf.h"
 #include "term.h"
 #include "util.h"
 
@@ -24,7 +23,7 @@ static void print_shape(const ked_dataset_t *ds, const ked_var_t *var)
 
 int ked_op_info(const char *path)
 {
-    ked_dataset_t *ds = ked_nc_open(path);
+    ked_dataset_t *ds = ked_dataset_open(path);
     if (!ds) return 1;
 
     /* File header */
@@ -90,7 +89,7 @@ int ked_op_info(const char *path)
 
 int ked_op_sinfo(const char *path)
 {
-    ked_dataset_t *ds = ked_nc_open(path);
+    ked_dataset_t *ds = ked_dataset_open(path);
     if (!ds) return 1;
 
     /* Header line */

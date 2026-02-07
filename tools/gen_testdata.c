@@ -1,7 +1,8 @@
 /*
- * gen_testdata - Generate a synthetic climate netCDF file for testing ked.
+ * gen_testdata - Generate synthetic climate test data for ked.
  *
- * Creates a netCDF-4 file with:
+ * If output path ends in .grib2 or .grib, generates GRIB2 (requires ecCodes).
+ * Otherwise generates netCDF-4:
  *   Dimensions: time(12, unlimited), lat(36), lon(72)
  *   Variables:  time, lat, lon, temperature, precipitation
  *   Global attributes: title, institution, history, Conventions
@@ -12,6 +13,10 @@
 #include <math.h>
 #include <string.h>
 #include <time.h>
+
+#ifdef KED_HAS_ECCODES
+#include <eccodes.h>
+#endif
 
 #define NLAT  36
 #define NLON  72
@@ -26,56 +31,82 @@
     } \
 } while(0)
 
-int main(int argc, char **argv)
-{
-    const char *outpath = "test_climate.nc";
-    if (argc > 1) outpath = argv[1];
+/* Precompute lat/lon arrays */
+static double lat_vals[NLAT];
+static double lon_vals[NLON];
 
+static void init_coords(void)
+{
+    for (int j = 0; j < NLAT; j++)
+        lat_vals[j] = -87.5 + (double)j * 5.0;
+    for (int i = 0; i < NLON; i++)
+        lon_vals[i] = 2.5 + (double)i * 5.0;
+}
+
+static void fill_temperature(float *data, int t)
+{
+    for (int j = 0; j < NLAT; j++) {
+        for (int i = 0; i < NLON; i++) {
+            double lat = lat_vals[j];
+            double seasonal = 10.0 * cos(2.0 * M_PI * (double)t / 12.0);
+            data[j * NLON + i] = (float)(280.0
+                - 40.0 * fabs(lat) / 90.0
+                + seasonal * (lat > 0 ? 1.0 : -1.0)
+                + 2.0 * sin((double)i * 0.5));
+        }
+    }
+}
+
+static void fill_precipitation(float *data, int t)
+{
+    for (int j = 0; j < NLAT; j++) {
+        for (int i = 0; i < NLON; i++) {
+            double lat = lat_vals[j];
+            double tropical = exp(-lat * lat / 800.0);
+            data[j * NLON + i] = (float)(5e-5 * tropical
+                * (1.0 + 0.3 * sin((double)i * 0.3 + (double)t)));
+        }
+    }
+}
+
+static int generate_netcdf(const char *outpath)
+{
     int ncid, time_dim, lat_dim, lon_dim;
     int time_var, lat_var, lon_var, temp_var, precip_var;
 
-    /* Create netCDF-4 file */
     NC_CHECK(nc_create(outpath, NC_NETCDF4 | NC_CLOBBER, &ncid));
 
-    /* Define dimensions */
     NC_CHECK(nc_def_dim(ncid, "time", NC_UNLIMITED, &time_dim));
     NC_CHECK(nc_def_dim(ncid, "lat", NLAT, &lat_dim));
     NC_CHECK(nc_def_dim(ncid, "lon", NLON, &lon_dim));
 
-    /* Define coordinate variables */
     NC_CHECK(nc_def_var(ncid, "time", NC_DOUBLE, 1, &time_dim, &time_var));
     NC_CHECK(nc_def_var(ncid, "lat", NC_DOUBLE, 1, &lat_dim, &lat_var));
     NC_CHECK(nc_def_var(ncid, "lon", NC_DOUBLE, 1, &lon_dim, &lon_var));
 
-    /* Define data variables */
     int dims3d[] = {time_dim, lat_dim, lon_dim};
     NC_CHECK(nc_def_var(ncid, "temperature", NC_FLOAT, 3, dims3d, &temp_var));
     NC_CHECK(nc_def_var(ncid, "precipitation", NC_FLOAT, 3, dims3d, &precip_var));
 
-    /* Variable attributes */
     NC_CHECK(nc_put_att_text(ncid, time_var, "units",
              strlen("days since 2000-01-01"), "days since 2000-01-01"));
     NC_CHECK(nc_put_att_text(ncid, time_var, "calendar",
              strlen("standard"), "standard"));
-    NC_CHECK(nc_put_att_text(ncid, time_var, "axis",
-             strlen("T"), "T"));
+    NC_CHECK(nc_put_att_text(ncid, time_var, "axis", strlen("T"), "T"));
 
     NC_CHECK(nc_put_att_text(ncid, lat_var, "units",
              strlen("degrees_north"), "degrees_north"));
-    NC_CHECK(nc_put_att_text(ncid, lat_var, "axis",
-             strlen("Y"), "Y"));
+    NC_CHECK(nc_put_att_text(ncid, lat_var, "axis", strlen("Y"), "Y"));
     NC_CHECK(nc_put_att_text(ncid, lat_var, "long_name",
              strlen("latitude"), "latitude"));
 
     NC_CHECK(nc_put_att_text(ncid, lon_var, "units",
              strlen("degrees_east"), "degrees_east"));
-    NC_CHECK(nc_put_att_text(ncid, lon_var, "axis",
-             strlen("X"), "X"));
+    NC_CHECK(nc_put_att_text(ncid, lon_var, "axis", strlen("X"), "X"));
     NC_CHECK(nc_put_att_text(ncid, lon_var, "long_name",
              strlen("longitude"), "longitude"));
 
-    NC_CHECK(nc_put_att_text(ncid, temp_var, "units",
-             strlen("K"), "K"));
+    NC_CHECK(nc_put_att_text(ncid, temp_var, "units", strlen("K"), "K"));
     NC_CHECK(nc_put_att_text(ncid, temp_var, "long_name",
              strlen("Near-Surface Air Temperature"),
              "Near-Surface Air Temperature"));
@@ -90,7 +121,6 @@ int main(int argc, char **argv)
     NC_CHECK(nc_put_att_float(ncid, precip_var, "_FillValue",
              NC_FLOAT, 1, &fill_val));
 
-    /* Global attributes */
     NC_CHECK(nc_put_att_text(ncid, NC_GLOBAL, "title",
              strlen("Synthetic Climate Test Data"),
              "Synthetic Climate Test Data"));
@@ -109,61 +139,153 @@ int main(int argc, char **argv)
 
     NC_CHECK(nc_enddef(ncid));
 
-    /* Write coordinate data */
-    double time_vals[NTIME];
-    for (int t = 0; t < NTIME; t++) {
-        time_vals[t] = (double)(t * 30);  /* ~monthly */
-    }
-    NC_CHECK(nc_put_var_double(ncid, time_var, time_vals));
-
-    double lat_vals[NLAT];
-    for (int j = 0; j < NLAT; j++) {
-        lat_vals[j] = -87.5 + (double)j * 5.0;
-    }
+    double time_vals_arr[NTIME];
+    for (int t = 0; t < NTIME; t++)
+        time_vals_arr[t] = (double)(t * 30);
+    NC_CHECK(nc_put_var_double(ncid, time_var, time_vals_arr));
     NC_CHECK(nc_put_var_double(ncid, lat_var, lat_vals));
-
-    double lon_vals[NLON];
-    for (int i = 0; i < NLON; i++) {
-        lon_vals[i] = 2.5 + (double)i * 5.0;
-    }
     NC_CHECK(nc_put_var_double(ncid, lon_var, lon_vals));
 
-    /* Write data variables with realistic-ish values */
     float *data = malloc((size_t)NLAT * (size_t)NLON * sizeof(float));
     if (!data) { fprintf(stderr, "out of memory\n"); return 1; }
 
     for (int t = 0; t < NTIME; t++) {
-        /* Temperature: ~220-310K, varies with latitude and season */
-        for (int j = 0; j < NLAT; j++) {
-            for (int i = 0; i < NLON; i++) {
-                double lat = lat_vals[j];
-                double seasonal = 10.0 * cos(2.0 * M_PI * (double)t / 12.0);
-                data[j * NLON + i] = (float)(280.0
-                    - 40.0 * fabs(lat) / 90.0
-                    + seasonal * (lat > 0 ? 1.0 : -1.0)
-                    + 2.0 * sin((double)i * 0.5));
-            }
-        }
         size_t start[] = {(size_t)t, 0, 0};
         size_t count[] = {1, NLAT, NLON};
+        fill_temperature(data, t);
         NC_CHECK(nc_put_vara_float(ncid, temp_var, start, count, data));
-
-        /* Precipitation: 0-1e-4 kg/m2/s, tropical peak */
-        for (int j = 0; j < NLAT; j++) {
-            for (int i = 0; i < NLON; i++) {
-                double lat = lat_vals[j];
-                double tropical = exp(-lat * lat / 800.0);
-                data[j * NLON + i] = (float)(5e-5 * tropical
-                    * (1.0 + 0.3 * sin((double)i * 0.3 + (double)t)));
-            }
-        }
+        fill_precipitation(data, t);
         NC_CHECK(nc_put_vara_float(ncid, precip_var, start, count, data));
     }
 
     free(data);
     NC_CHECK(nc_close(ncid));
 
-    printf("Created %s (%d times, %dx%d grid, 2 variables)\n",
+    printf("Created %s (netCDF-4, %d times, %dx%d grid, 2 variables)\n",
            outpath, NTIME, NLAT, NLON);
     return 0;
+}
+
+#ifdef KED_HAS_ECCODES
+
+#define EC_CHECK(call) do { \
+    int _rc = (call); \
+    if (_rc != CODES_SUCCESS) { \
+        fprintf(stderr, "ecCodes error at %s:%d: %s\n", \
+                __FILE__, __LINE__, codes_get_error_message(_rc)); \
+        exit(1); \
+    } \
+} while(0)
+
+static int generate_grib2(const char *outpath)
+{
+    FILE *f = fopen(outpath, "wb");
+    if (!f) {
+        fprintf(stderr, "Cannot create '%s'\n", outpath);
+        return 1;
+    }
+
+    float *data = malloc((size_t)NLAT * (size_t)NLON * sizeof(float));
+    double *ddata = malloc((size_t)NLAT * (size_t)NLON * sizeof(double));
+    if (!data || !ddata) { fprintf(stderr, "out of memory\n"); return 1; }
+
+    /* Write one GRIB2 message per variable per timestep */
+    for (int t = 0; t < NTIME; t++) {
+        /* Two variables: temperature (paramId=167, 2t) and precipitation (paramId=228228, tp) */
+        for (int vi = 0; vi < 2; vi++) {
+            codes_handle *h = codes_grib_handle_new_from_samples(NULL, "regular_ll_sfc_grib2");
+            if (!h) {
+                fprintf(stderr, "Failed to create GRIB2 handle from sample\n");
+                free(data); free(ddata); fclose(f);
+                return 1;
+            }
+
+            /* Grid definition */
+            EC_CHECK(codes_set_long(h, "Ni", NLON));
+            EC_CHECK(codes_set_long(h, "Nj", NLAT));
+            EC_CHECK(codes_set_double(h, "latitudeOfFirstGridPointInDegrees", lat_vals[0]));
+            EC_CHECK(codes_set_double(h, "latitudeOfLastGridPointInDegrees", lat_vals[NLAT-1]));
+            EC_CHECK(codes_set_double(h, "longitudeOfFirstGridPointInDegrees", lon_vals[0]));
+            EC_CHECK(codes_set_double(h, "longitudeOfLastGridPointInDegrees", lon_vals[NLON-1]));
+            EC_CHECK(codes_set_double(h, "iDirectionIncrementInDegrees", 5.0));
+            EC_CHECK(codes_set_double(h, "jDirectionIncrementInDegrees", 5.0));
+
+            /* Time: dataDate=20000115+t months, dataTime=0000 */
+            long year = 2000, month = 1 + t;
+            if (month > 12) { year += (month - 1) / 12; month = ((month - 1) % 12) + 1; }
+            long date = year * 10000 + month * 100 + 15;
+            EC_CHECK(codes_set_long(h, "dataDate", date));
+            EC_CHECK(codes_set_long(h, "dataTime", 0));
+
+            /* Variable identity */
+            if (vi == 0) {
+                /* Temperature: paramId 167 = 2m temperature */
+                EC_CHECK(codes_set_long(h, "paramId", 167));
+                fill_temperature(data, t);
+            } else {
+                /* Precipitation: paramId 228228 = total precipitation */
+                EC_CHECK(codes_set_long(h, "paramId", 228228));
+                fill_precipitation(data, t);
+            }
+
+            EC_CHECK(codes_set_long(h, "bitsPerValue", 16));
+
+            /* Convert float to double for ecCodes */
+            size_t nvals = (size_t)NLAT * (size_t)NLON;
+            for (size_t k = 0; k < nvals; k++)
+                ddata[k] = (double)data[k];
+
+            EC_CHECK(codes_set_double_array(h, "values", ddata, nvals));
+
+            /* Write message */
+            const void *buf = NULL;
+            size_t sz = 0;
+            EC_CHECK(codes_get_message(h, &buf, &sz));
+            if (fwrite(buf, 1, sz, f) != sz) {
+                fprintf(stderr, "Write error\n");
+                codes_handle_delete(h);
+                free(data); free(ddata); fclose(f);
+                return 1;
+            }
+
+            codes_handle_delete(h);
+        }
+    }
+
+    free(data);
+    free(ddata);
+    fclose(f);
+
+    printf("Created %s (GRIB2, %d times, %dx%d grid, 2 variables, %d messages)\n",
+           outpath, NTIME, NLAT, NLON, NTIME * 2);
+    return 0;
+}
+
+#endif /* KED_HAS_ECCODES */
+
+/* Check if filename ends with given suffix */
+static int ends_with(const char *s, const char *suffix)
+{
+    size_t slen = strlen(s), sfxlen = strlen(suffix);
+    if (sfxlen > slen) return 0;
+    return strcmp(s + slen - sfxlen, suffix) == 0;
+}
+
+int main(int argc, char **argv)
+{
+    const char *outpath = "test_climate.nc";
+    if (argc > 1) outpath = argv[1];
+
+    init_coords();
+
+    if (ends_with(outpath, ".grib2") || ends_with(outpath, ".grib")) {
+#ifdef KED_HAS_ECCODES
+        return generate_grib2(outpath);
+#else
+        fprintf(stderr, "GRIB output requested but built without ecCodes\n");
+        return 1;
+#endif
+    }
+
+    return generate_netcdf(outpath);
 }
