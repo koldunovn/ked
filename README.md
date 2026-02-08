@@ -104,14 +104,22 @@ ked <operator> [options] <files...>
 | Zarr v2 | Directory with `.zgroup` / `.zmetadata` | Opened via NCZarr |
 | GRIB1/GRIB2 | `GRIB` magic bytes | Requires ecCodes |
 
-File format is auto-detected — no flags needed.
+File format is auto-detected — no flags needed. Reduced Gaussian grids (e.g., from ERA5) are supported and mapped to a flat `ncells` dimension.
 
 ### Operators
 
-| Operator | Description |
-|----------|-------------|
-| `info`   | Show detailed file information (dimensions, variables, attributes) |
-| `sinfo`  | Show short summary — one line per variable |
+| Operator | Description | Example |
+|----------|-------------|---------|
+| `info`   | Show detailed file information | `ked info climate.nc` |
+| `sinfo`  | Show short summary — one line per variable | `ked sinfo climate.nc` |
+| `copy`   | Copy/convert file (e.g., GRIB to netCDF) | `ked copy input.grib2 output.nc` |
+| `select` | Subset by variable name | `ked select -v temp input.nc output.nc` |
+| `merge`  | Combine variables from multiple files | `ked merge a.nc b.nc merged.nc` |
+| `cat`    | Concatenate files along time dimension | `ked cat jan.nc feb.nc year.nc` |
+
+`sel` is accepted as a shorthand for `select`.
+
+For write operators (`copy`, `select`, `merge`, `cat`), the last argument is always the output file. All output is written as netCDF-4.
 
 ### Options
 
@@ -120,8 +128,30 @@ File format is auto-detected — no flags needed.
 | `--help` | Show usage information |
 | `--version` | Print version |
 | `--no-color` | Disable colored output |
+| `-v <name>` | Select variable(s), comma-separated |
+| `-z <level>` | Compression: 0=off, 1-9=deflate level (default: auto) |
 
 Color is also disabled automatically when stdout is not a terminal, when `$TERM` is `dumb`, or when the `NO_COLOR` environment variable is set (see [no-color.org](https://no-color.org/)).
+
+### Compression
+
+By default (`-z` not specified), `ked` preserves the compression settings from the source file:
+
+- If the input netCDF variables use deflate, the output will use the same deflate level.
+- If the input is uncompressed (or GRIB), the output will be uncompressed.
+
+Use `-z` to override:
+
+```bash
+# Force no compression (fastest writes)
+ked copy -z 0 input.nc output.nc
+
+# Force deflate level 1 (good balance of speed and size)
+ked cat -z 1 jan.nc feb.nc year.nc
+
+# Force deflate level 9 (maximum compression, slowest)
+ked copy -z 9 input.nc output.nc
+```
 
 ### Examples
 
@@ -134,6 +164,21 @@ ked sinfo output.nc
 
 # GRIB files work the same way
 ked info era5_temperature.grib2
+
+# Convert GRIB to netCDF
+ked copy era5.grib2 era5.nc
+
+# Extract one variable (coordinate variables are included automatically)
+ked select -v temperature input.nc temp_only.nc
+
+# Extract multiple variables
+ked select -v temperature,precipitation input.nc subset.nc
+
+# Merge variables from separate files
+ked merge temp.nc precip.nc combined.nc
+
+# Concatenate monthly files into one
+ked cat data_jan.nc data_feb.nc data_mar.nc quarterly.nc
 
 # Plain output (no ANSI colors)
 ked --no-color info climate.nc
@@ -153,9 +198,10 @@ ked/
 │   ├── cli.c/h           # Command-line argument parsing
 │   ├── dataset.c/h       # Data model (variables, dimensions, attributes)
 │   ├── io.c              # Format auto-detection and backend dispatch
-│   ├── io_netcdf.c/h     # netCDF / NCZarr I/O backend
+│   ├── io_netcdf.c/h     # netCDF / NCZarr read + write backend
 │   ├── io_grib.c/h       # GRIB I/O backend (optional, requires ecCodes)
 │   ├── ops_info.c/h      # info and sinfo operators
+│   ├── ops_data.c/h      # copy, select, merge, cat operators
 │   ├── term.c/h          # Terminal output (colors, formatting)
 │   └── util.c/h          # Memory, error handling, helpers
 └── tools/
@@ -166,7 +212,7 @@ ked/
 
 - **Phase 1** — Foundation + info/sinfo operators ✅
 - **Phase 2** — GRIB support via ecCodes ✅
-- **Phase 3** — Data operations: `copy`, `merge`, `cat`, `select`
+- **Phase 3** — Data operations: `copy`, `merge`, `cat`, `select` ✅
 - **Phase 4** — Statistical operators with OpenMP: `timmean`, `fldmean`, `yearmonmean`
 
 See [PLAN.md](PLAN.md) for detailed implementation notes.

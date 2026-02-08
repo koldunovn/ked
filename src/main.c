@@ -1,5 +1,6 @@
 #include "ked.h"
 #include "cli.h"
+#include "ops_data.h"
 #include "ops_info.h"
 #include "term.h"
 #include "util.h"
@@ -56,6 +57,41 @@ int main(int argc, char **argv)
             if (ked_op_sinfo(args.files[i]) != 0) rc = 1;
         }
         return rc;
+    }
+
+    if (strcmp(args.operator, "copy") == 0) {
+        if (args.nfiles < 2) {
+            ked_die("'copy' requires input and output files: ked copy input output");
+        }
+        return ked_op_copy(args.files[0], args.files[args.nfiles - 1],
+                          args.compress);
+    }
+
+    if (strcmp(args.operator, "select") == 0 || strcmp(args.operator, "sel") == 0) {
+        if (args.nfiles < 2) {
+            ked_die("'select' requires input and output files: ked select -v var input output");
+        }
+        if (!args.var_select) {
+            ked_die("'select' requires -v flag: ked select -v temperature input.nc output.nc");
+        }
+        return ked_op_select(args.files[0], args.files[args.nfiles - 1],
+                             args.var_select, args.compress);
+    }
+
+    if (strcmp(args.operator, "merge") == 0) {
+        if (args.nfiles < 2) {
+            ked_die("'merge' requires at least one input and one output file");
+        }
+        return ked_op_merge(args.nfiles - 1, args.files,
+                            args.files[args.nfiles - 1], args.compress);
+    }
+
+    if (strcmp(args.operator, "cat") == 0) {
+        if (args.nfiles < 2) {
+            ked_die("'cat' requires at least one input and one output file");
+        }
+        return ked_op_cat(args.nfiles - 1, args.files,
+                          args.files[args.nfiles - 1], args.compress);
     }
 
     ked_die("unknown operator '%s'. Run '%s --help' for usage.",

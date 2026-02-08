@@ -5,7 +5,7 @@
 #ifndef KED_H
 #define KED_H
 
-#define KED_VERSION "0.2.0"
+#define KED_VERSION "0.3.0"
 #define KED_NAME    "ked"
 
 #define KED_MAX_NAME  256

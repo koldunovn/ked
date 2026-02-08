@@ -139,10 +139,6 @@ static int generate_netcdf(const char *outpath)
 
     NC_CHECK(nc_enddef(ncid));
 
-    double time_vals_arr[NTIME];
-    for (int t = 0; t < NTIME; t++)
-        time_vals_arr[t] = (double)(t * 30);
-    NC_CHECK(nc_put_var_double(ncid, time_var, time_vals_arr));
     NC_CHECK(nc_put_var_double(ncid, lat_var, lat_vals));
     NC_CHECK(nc_put_var_double(ncid, lon_var, lon_vals));
 
@@ -159,6 +155,14 @@ static int generate_netcdf(const char *outpath)
     }
 
     free(data);
+
+    /* Write time coordinate values (after data, so unlimited dim is extended) */
+    double time_vals_arr[NTIME];
+    for (int t = 0; t < NTIME; t++)
+        time_vals_arr[t] = (double)(t * 30);
+    size_t t_start = 0, t_count = NTIME;
+    NC_CHECK(nc_put_vara_double(ncid, time_var, &t_start, &t_count, time_vals_arr));
+
     NC_CHECK(nc_close(ncid));
 
     printf("Created %s (netCDF-4, %d times, %dx%d grid, 2 variables)\n",

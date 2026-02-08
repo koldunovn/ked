@@ -10,7 +10,8 @@ typedef struct {
     bool        no_color;
     bool        help;
     bool        version;
-    const char *var_select;     /* -v variable selection (future) */
+    const char *var_select;     /* -v variable selection */
+    int         compress;       /* -z: -1=auto(default), 0=off, 1-9=deflate level */
 } ked_args_t;
 
 /* Parse command-line arguments. Returns 0 on success, -1 on error.

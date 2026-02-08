@@ -6,12 +6,13 @@
 #include <stdbool.h>
 #include <stddef.h>
 
-/* Attribute value (simplified - stores as string) */
+/* Attribute value */
 typedef struct {
     char       name[KED_MAX_NAME];
     ked_type_t type;
     size_t     len;
     char      *value_str;  /* Human-readable string representation */
+    void      *value_raw;  /* Raw binary data for type-preserving copy */
 } ked_attr_t;
 
 /* Variable */
@@ -24,6 +25,8 @@ typedef struct {
     size_t     shape[KED_MAX_DIMS];
     int        natts;
     ked_attr_t *atts;
+    int        deflate;       /* 0=off, 1-9=deflate level */
+    bool       shuffle;       /* shuffle filter */
 } ked_var_t;
 
 /* Dimension */
@@ -65,5 +68,13 @@ size_t ked_var_nelems(const ked_var_t *var);
 
 /* Compute variable data size in bytes */
 size_t ked_var_size(const ked_var_t *var);
+
+/* Get the size in bytes of a single element of a type */
+size_t ked_type_size(ked_type_t type);
+
+/* Read variable data into a caller-supplied buffer.
+ * Buffer must be at least ked_var_size(var) bytes.
+ * Returns 0 on success, -1 on error. */
+int ked_dataset_read_var(const ked_dataset_t *ds, int varidx, void *buf);
 
 #endif /* KED_DATASET_H */

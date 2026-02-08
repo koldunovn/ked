@@ -1,4 +1,9 @@
 #include "dataset.h"
+#include "io_netcdf.h"
+
+#ifdef KED_HAS_ECCODES
+#include "io_grib.h"
+#endif
 
 #include <stdlib.h>
 #include <string.h>
@@ -45,22 +50,47 @@ size_t ked_var_nelems(const ked_var_t *var)
     return n;
 }
 
+size_t ked_type_size(ked_type_t type)
+{
+    switch (type) {
+    case KED_TYPE_BYTE: case KED_TYPE_CHAR: case KED_TYPE_UBYTE:
+        return 1;
+    case KED_TYPE_SHORT: case KED_TYPE_USHORT:
+        return 2;
+    case KED_TYPE_INT: case KED_TYPE_UINT: case KED_TYPE_FLOAT:
+        return 4;
+    case KED_TYPE_DOUBLE: case KED_TYPE_INT64: case KED_TYPE_UINT64:
+        return 8;
+    default:
+        return 0;
+    }
+}
+
 size_t ked_var_size(const ked_var_t *var)
 {
-    size_t elem_size = 0;
-    switch (var->type) {
-    case KED_TYPE_BYTE: case KED_TYPE_CHAR: case KED_TYPE_UBYTE:
-        elem_size = 1; break;
-    case KED_TYPE_SHORT: case KED_TYPE_USHORT:
-        elem_size = 2; break;
-    case KED_TYPE_INT: case KED_TYPE_UINT: case KED_TYPE_FLOAT:
-        elem_size = 4; break;
-    case KED_TYPE_DOUBLE: case KED_TYPE_INT64: case KED_TYPE_UINT64:
-        elem_size = 8; break;
+    return ked_var_nelems(var) * ked_type_size(var->type);
+}
+
+int ked_dataset_read_var(const ked_dataset_t *ds, int varidx, void *buf)
+{
+    if (varidx < 0 || varidx >= ds->nvars) return -1;
+
+    switch (ds->format) {
+    case KED_FMT_NC3:
+    case KED_FMT_NC3_64:
+    case KED_FMT_NC4:
+    case KED_FMT_NC4_CLASSIC:
+        return ked_nc_read_var(ds, varidx, buf);
+
+#ifdef KED_HAS_ECCODES
+    case KED_FMT_GRIB1:
+    case KED_FMT_GRIB2:
+        return ked_grib_read_var(ds, varidx, buf);
+#endif
+
     default:
-        elem_size = 0; break;
+        return -1;
     }
-    return ked_var_nelems(var) * elem_size;
 }
 
 void ked_dataset_close(ked_dataset_t *ds)
@@ -71,6 +101,7 @@ void ked_dataset_close(ked_dataset_t *ds)
         if (ds->vars[v].atts) {
             for (int a = 0; a < ds->vars[v].natts; a++) {
                 free(ds->vars[v].atts[a].value_str);
+                free(ds->vars[v].atts[a].value_raw);
             }
             free(ds->vars[v].atts);
         }
@@ -80,6 +111,7 @@ void ked_dataset_close(ked_dataset_t *ds)
     if (ds->gatts) {
         for (int a = 0; a < ds->ngatts; a++) {
             free(ds->gatts[a].value_str);
+            free(ds->gatts[a].value_raw);
         }
         free(ds->gatts);
     }

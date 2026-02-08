@@ -7,6 +7,26 @@
 #include <string.h>
 #include <sys/stat.h>
 
+/* Convert ked_type_t to nc_type */
+static nc_type ked_to_nc_type(ked_type_t t)
+{
+    switch (t) {
+    case KED_TYPE_BYTE:   return NC_BYTE;
+    case KED_TYPE_CHAR:   return NC_CHAR;
+    case KED_TYPE_SHORT:  return NC_SHORT;
+    case KED_TYPE_INT:    return NC_INT;
+    case KED_TYPE_FLOAT:  return NC_FLOAT;
+    case KED_TYPE_DOUBLE: return NC_DOUBLE;
+    case KED_TYPE_UBYTE:  return NC_UBYTE;
+    case KED_TYPE_USHORT: return NC_USHORT;
+    case KED_TYPE_UINT:   return NC_UINT;
+    case KED_TYPE_INT64:  return NC_INT64;
+    case KED_TYPE_UINT64: return NC_UINT64;
+    case KED_TYPE_STRING: return NC_STRING;
+    default:              return NC_NAT;
+    }
+}
+
 /* Convert nc_type to ked_type_t */
 static ked_type_t nc_to_ked_type(nc_type t)
 {
@@ -108,6 +128,18 @@ static char *format_attr_value(int ncid, int varid, const char *name,
     return buf;
 }
 
+/* Size of a single element for an nc_type */
+static size_t nc_elem_size(nc_type t)
+{
+    switch (t) {
+    case NC_BYTE: case NC_CHAR: case NC_UBYTE: return 1;
+    case NC_SHORT: case NC_USHORT: return 2;
+    case NC_INT: case NC_UINT: case NC_FLOAT: return 4;
+    case NC_DOUBLE: case NC_INT64: case NC_UINT64: return 8;
+    default: return 0;
+    }
+}
+
 /* Read attributes for a variable (or global if varid == NC_GLOBAL) */
 static ked_attr_t *read_attrs(int ncid, int varid, int natts)
 {
@@ -120,6 +152,14 @@ static ked_attr_t *read_attrs(int ncid, int varid, int natts)
         atts[i].type = nc_to_ked_type(nc_t);
         atts[i].value_str = format_attr_value(ncid, varid, atts[i].name,
                                               nc_t, atts[i].len);
+        /* Store raw binary data for type-preserving copy */
+        if (nc_t != NC_STRING) {
+            size_t esz = nc_elem_size(nc_t);
+            if (esz > 0 && atts[i].len > 0) {
+                atts[i].value_raw = ked_malloc(esz * atts[i].len);
+                nc_get_att(ncid, varid, atts[i].name, atts[i].value_raw);
+            }
+        }
     }
     return atts;
 }
@@ -233,6 +273,15 @@ ked_dataset_t *ked_nc_open(const char *path)
             ds->vars[v].shape[d] = ds->dims[did].len;
         }
 
+        /* Read compression settings */
+        {
+            int shuf = 0, def = 0, dlev = 0;
+            if (nc_inq_var_deflate(ncid, v, &shuf, &def, &dlev) == NC_NOERR && def) {
+                ds->vars[v].deflate = dlev;
+                ds->vars[v].shuffle = shuf != 0;
+            }
+        }
+
         /* Read variable attributes */
         ds->vars[v].atts = read_attrs(ncid, v, ds->vars[v].natts);
     }
@@ -241,4 +290,163 @@ ked_dataset_t *ked_nc_open(const char *path)
     ds->gatts = read_attrs(ncid, NC_GLOBAL, ds->ngatts);
 
     return ds;
+}
+
+int ked_nc_read_var(const ked_dataset_t *ds, int varidx, void *buf)
+{
+    if (!ds->backend) return -1;
+    int ncid = *(int *)ds->backend;
+    const ked_var_t *var = &ds->vars[varidx];
+    nc_type nct = ked_to_nc_type(var->type);
+
+    int rc;
+    switch (nct) {
+    case NC_BYTE:   case NC_CHAR:  case NC_UBYTE:
+    case NC_SHORT:  case NC_USHORT:
+    case NC_INT:    case NC_UINT:
+    case NC_INT64:  case NC_UINT64:
+    case NC_FLOAT:
+        rc = nc_get_var(ncid, var->varid, buf);
+        break;
+    case NC_DOUBLE:
+        rc = nc_get_var_double(ncid, var->varid, buf);
+        break;
+    default:
+        return -1;
+    }
+
+    if (rc != NC_NOERR) {
+        fprintf(stderr, "ked: cannot read variable '%s': %s\n",
+                var->name, nc_strerror(rc));
+        return -1;
+    }
+    return 0;
+}
+
+int ked_nc_create(ked_dataset_t *ds, const char *path)
+{
+    int ncid;
+    int cmode = NC_CLOBBER;
+
+    switch (ds->format) {
+    case KED_FMT_NC3:         cmode |= NC_CLASSIC_MODEL; break;
+    case KED_FMT_NC3_64:      cmode |= NC_64BIT_OFFSET; break;
+    case KED_FMT_NC4_CLASSIC: cmode |= NC_NETCDF4 | NC_CLASSIC_MODEL; break;
+    default:                  cmode |= NC_NETCDF4; break;
+    }
+
+    int rc = nc_create(path, cmode, &ncid);
+    if (rc != NC_NOERR) {
+        fprintf(stderr, "ked: cannot create '%s': %s\n", path, nc_strerror(rc));
+        return -1;
+    }
+
+    /* Define dimensions */
+    int *dimids = ked_malloc((size_t)ds->ndims * sizeof(int));
+    for (int d = 0; d < ds->ndims; d++) {
+        size_t len = ds->dims[d].unlimited ? NC_UNLIMITED : ds->dims[d].len;
+        rc = nc_def_dim(ncid, ds->dims[d].name, len, &dimids[d]);
+        if (rc != NC_NOERR) {
+            fprintf(stderr, "ked: cannot define dim '%s': %s\n",
+                    ds->dims[d].name, nc_strerror(rc));
+            free(dimids);
+            nc_close(ncid);
+            return -1;
+        }
+    }
+
+    /* Define variables */
+    for (int v = 0; v < ds->nvars; v++) {
+        ked_var_t *var = &ds->vars[v];
+        int vdims[KED_MAX_DIMS];
+        for (int d = 0; d < var->ndims; d++)
+            vdims[d] = dimids[var->dimids[d]];
+
+        int vid;
+        rc = nc_def_var(ncid, var->name, ked_to_nc_type(var->type),
+                        var->ndims, vdims, &vid);
+        if (rc != NC_NOERR) {
+            fprintf(stderr, "ked: cannot define var '%s': %s\n",
+                    var->name, nc_strerror(rc));
+            free(dimids);
+            nc_close(ncid);
+            return -1;
+        }
+        var->varid = vid;
+
+        /* Apply compression from source (NC4 only) */
+        if ((ds->format == KED_FMT_NC4 || ds->format == KED_FMT_NC4_CLASSIC) &&
+            var->deflate > 0) {
+            nc_def_var_deflate(ncid, vid, var->shuffle ? 1 : 0,
+                               1, var->deflate);
+        }
+
+        /* Write variable attributes */
+        for (int a = 0; a < var->natts; a++) {
+            ked_attr_t *att = &var->atts[a];
+            if (att->value_raw) {
+                nc_put_att(ncid, vid, att->name, ked_to_nc_type(att->type),
+                           att->len, att->value_raw);
+            } else if (att->value_str) {
+                nc_put_att_text(ncid, vid, att->name,
+                                strlen(att->value_str), att->value_str);
+            }
+        }
+    }
+
+    /* Write global attributes */
+    for (int a = 0; a < ds->ngatts; a++) {
+        ked_attr_t *att = &ds->gatts[a];
+        if (att->value_raw) {
+            nc_put_att(ncid, NC_GLOBAL, att->name, ked_to_nc_type(att->type),
+                       att->len, att->value_raw);
+        } else if (att->value_str) {
+            nc_put_att_text(ncid, NC_GLOBAL, att->name,
+                            strlen(att->value_str), att->value_str);
+        }
+    }
+
+    free(dimids);
+
+    rc = nc_enddef(ncid);
+    if (rc != NC_NOERR) {
+        fprintf(stderr, "ked: enddef failed: %s\n", nc_strerror(rc));
+        nc_close(ncid);
+        return -1;
+    }
+
+    /* Store ncid as backend */
+    int *ncid_ptr = ked_malloc(sizeof(int));
+    *ncid_ptr = ncid;
+    ds->backend = ncid_ptr;
+    ds->backend_close = nc_backend_close;
+    snprintf(ds->path, sizeof(ds->path), "%s", path);
+
+    return 0;
+}
+
+int ked_nc_write_var(const ked_dataset_t *ds, int varidx, const void *buf)
+{
+    if (!ds->backend) return -1;
+    int ncid = *(int *)ds->backend;
+    const ked_var_t *var = &ds->vars[varidx];
+
+    /* Use nc_put_vara with explicit start/count to handle unlimited dims */
+    size_t start[KED_MAX_DIMS] = {0};
+    size_t count[KED_MAX_DIMS];
+    for (int d = 0; d < var->ndims; d++)
+        count[d] = var->shape[d];
+
+    int rc;
+    if (var->ndims > 0)
+        rc = nc_put_vara(ncid, var->varid, start, count, buf);
+    else
+        rc = nc_put_var(ncid, var->varid, buf);
+
+    if (rc != NC_NOERR) {
+        fprintf(stderr, "ked: cannot write variable '%s': %s\n",
+                var->name, nc_strerror(rc));
+        return -1;
+    }
+    return 0;
 }
